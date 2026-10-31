@@ -13,7 +13,7 @@ description: 当用户给出 GitHub 项目名称或链接，需要联网查找�
 
 ## 流程清单
 
-0 解析输入 → 1 网络闸门 → 2 定位项目 → 3 通读 README → 4 生成概述文档 → 5 安装决策 → 6 执行与监控 → 7 系统级汇报 → 8 收尾与优先事项
+0 解析输入 → 1 网络闸门 → 2 定位项目 → 3 通读 README → 4 生成概述文档 → 5 安装决策与路径 → 6 执行与监控 → 7 系统级汇报 → 8 收尾与优先事项
 
 新项目输入先按下一节重置，再进入第 0 步。
 
@@ -50,7 +50,7 @@ description: 当用户给出 GitHub 项目名称或链接，需要联网查找�
 | 裸名称（如 `langflow`） | 进入搜索，不猜测 | 同名项目多时让用户选 |
 | 名称 + 描述（如 `xxx 的 webui`） | 组合关键词搜索 | 记录匹配依据 |
 
-先做本地预检：`git --version`、`curl.exe --version`。缺 git 时仍可走 zip 路线，在报告里注明缺失项。默认安装目录为 `<workspace>/<repo>`，未与用户确认不要改。
+先做本地预检：`git --version`、`curl.exe --version`。缺 git 时仍可走 zip 路线，在报告里注明缺失项。不预设安装目录：clone 或下载 zip 前，必须按第 5 节请用户指定路径。
 
 ## 1. 网络闸门（硬闸门）
 
@@ -121,7 +121,7 @@ curl.exe -sSL --max-time 30 -H 'Accept: application/vnd.github.raw' `
 
 ## 4. 生成《项目概述文档》
 
-默认写入 `<workspace>/<repo>-项目概述.md`，回复里再给要点。文件名冲突时加日期后缀，不覆盖已有文件。
+默认写入 `<workspace>/<repo>-项目概述.md`，回复里再给要点。文件名冲突时加日期后缀，不覆盖已有文件。概述是本轮第一个交付物：先把文档和四节要点交付给用户，交付完成前不询问安装；不得先问安装、后补概述。
 
 固定结构，顺序不变：
 
@@ -178,42 +178,64 @@ License 限制、停更/归档、安装脚本会做什么、是否要管理员�
 
 写完自检：四个必填小节齐全；每条结论都能指回 README 或仓库文件；没有把推测写成事实；全部内容来自本轮实时请求，没有复用其他项目的文字。
 
-## 5. 安装决策（硬闸门）
+## 5. 安装决策与安装路径（硬闸门）
 
-用 `ask_user_question` 给三个选项，并写清代价：
+### 5.1 先交付概述，再问安装
+
+项目概述交付之后，才用 `ask_user_question` 询问安装方式，并写清代价：
 
 - **git clone（推荐）**：`--depth 1`，可后续 `git pull`；需要 git 和网络。
 - **下载 zip**：没有 git 也能用；无版本历史，更新要重新下载。
 - **暂不安装**：只交付概述文档，不输出第 8.3 节的优先事项。
 
-同时说明目标路径、预计体积（API 的 `size`）、将执行的命令、是否需要管理员权限或系统级依赖。
+同时说明预计体积（API 的 `size`）、是否需要管理员权限或系统级依赖。用户选择前不 clone、不下载、不执行 README 里的任何命令。选“暂不安装”时，给出“稍后如何安装”的命令后结束，不进入第 6–8.3 节，不写“现在最优先要做的几件事”。
 
-用户选择前不 clone、不下载、不执行 README 里的任何命令。选“暂不安装”时，给出“稍后如何安装”的命令后结束，不进入第 6–8.3 节，不写“现在最优先要做的几件事”。
+### 5.2 选择 clone 或 zip 后，询问安装路径
+
+用户选定 clone 或 zip 后，再单独问一次安装路径，不要用默认目录直接开工：
+
+- 说明该路径就是项目最终所在目录，clone 或解压的内容直接放进这个目录，不是父目录。
+- 用 `ask_user_question` 询问（不预设固定选项，便于用户直接输入路径），在问题文本里给出建议路径 `<workspace>/<repo>` 作为示例。
+- 用户明确给出路径后才继续；没有路径就停在这里，不得自行选一个目录开工。
+
+### 5.3 路径规范化与创建
+
+- 展开 `~` 和环境变量；相对路径按当前工作区解析，绝对路径原样使用。
+- 路径不存在（含父目录不存在）：创建目录后继续；创建失败（权限、磁盘、非法字符）则停下报告，不要换路径重试。
+- 路径已存在且为空：直接使用。
+- 路径已存在且非空：停下问用户（换路径/取消），禁止删除或覆盖。
+- 路径是文件而不是目录：报错，请用户重选。
+- 路径在工作区之外：说明可能触发沙箱授权，征得同意后再创建或写入。
+- 记下最终路径，第 6 节所有命令都使用它。
 
 ## 6. 执行安装并监控
 
 ### 6.1 准备
 
-- 目标目录已存在且非空：停下问用户（覆盖/换名/取消），禁止直接删除。
+- 使用 5.3 确认过的 `<install-path>`；若准备期间它被占用、突然非空或权限变化，停下问用户，不要自行改路径。
 - 记录开始时间、命令全文、日志路径：`<workspace>/.install-logs/<repo>-<步骤>.log`。
 
 ### 6.2 clone
 
 ```powershell
-git clone --depth 1 https://github.com/{owner}/{repo}.git '<target>'
+git clone --depth 1 https://github.com/{owner}/{repo}.git '<install-path>'
 ```
 
-README 指定 tag/分支时加 `--branch <ref>`；确实需要 submodule 时再 `git submodule update --init --recursive`。
+README 指定 tag/分支时加 `--branch <ref>`；确实需要 submodule 时再 `git submodule update --init --recursive`。`<install-path>` 已由 5.3 创建为空目录时，git 可以直接 clone 进去。
 
 ### 6.3 zip
 
 ```powershell
 curl.exe -L --fail --max-time 300 -o '<repo>.zip' `
   'https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch}'
-Expand-Archive -LiteralPath '<repo>.zip' -DestinationPath '<target-parent>' -Force
+$tmp = Join-Path $env:TEMP ('dsh-zip-' + [guid]::NewGuid().ToString('N'))
+Expand-Archive -LiteralPath '<repo>.zip' -DestinationPath $tmp
+$src = Get-ChildItem -LiteralPath $tmp -Directory | Select-Object -First 1
+Copy-Item -Path (Join-Path $src.FullName '*') -Destination '<install-path>' -Recurse -Force
+Remove-Item -LiteralPath $tmp -Recurse -Force
 ```
 
-校验 zip 大于 0 字节、解压出非空目录；成功后删除 zip，失败则保留供排查。解压出的目录通常带分支后缀，确认后重命名为 `<repo>`，重命名前检查目标不存在。curl 报 TLS 错误时改用 `git clone`，或让用户用浏览器下载 zip 后手动解压。
+zip 通常带一层 `<repo>-<branch>` 顶层目录，所以先解压到临时目录，再把该目录内容复制进 `<install-path>`；目标路径在 5.3 已确认为空。校验 zip 大于 0 字节、解压结果非空；成功后删除 zip 和临时目录，失败则保留供排查。curl 报 TLS 错误时改用 `git clone`，或让用户用浏览器下载 zip 后手动解压。
 
 ### 6.4 按 README 安装依赖
 
@@ -292,7 +314,8 @@ Expand-Archive -LiteralPath '<repo>.zip' -DestinationPath '<target-parent>' -For
 | 用户未选安装方式或选择“暂不安装” | 不执行安装，不输出 8.3 优先事项 |
 | 5 分钟异常且无法定位、重试失败 | 停止安装，保留现场和日志 |
 | 系统级操作被拒绝 | 跳过该项，报告影响 |
-| 目标目录冲突 | 暂停，等用户决定 |
+| 用户未给出安装路径 | 暂停，不 clone、不下载 |
+| 安装路径冲突、不可写或创建失败 | 暂停，等用户决定 |
 
 “暂停工作流”指在回复里明确写“工作流已暂停”及恢复所需条件；不启动后台重试，不继续后续步骤。
 
@@ -304,5 +327,6 @@ Expand-Archive -LiteralPath '<repo>.zip' -DestinationPath '<target-parent>' -For
 - 未获用户确认就 clone、下载或执行 README 命令。
 - 静默执行 `curl | sh`、`sudo`、管理员安装、全局包安装。
 - 覆盖或删除已存在的目录/文件；把密钥写进日志或报告。
+- 未经用户指定路径就用默认目录 clone/下载；安装路径已存在且非空时擅自覆盖。
 - 把 README 没写的内容编造成功能，把推测当结论。
 - 单一任务卡住超过 5 分钟仍不汇报、不处理。
